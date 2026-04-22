@@ -1,46 +1,51 @@
 import numpy as np
-
+from pathlib import Path
 
 def toArbfile(data, samplerate, fName):
-
-    # Number of points in the data
+    # 获取数据长度
     numberofpoints = data.shape[0]
 
-    # Get max and min values from waveform data
+    # 获取极值
     data_min = np.min(data)
     data_max = np.max(data)
 
-    # Range has to be the maximum absolute value between data_min and data_max
+    # 计算范围，并防范全0数据的除零风险 (ZeroDivisionError)
     range_value = max(abs(data_min), abs(data_max))
+    if range_value == 0:
+        # 如果全部为0，直接生成全0的int16数组
+        data_conv = np.zeros_like(data, dtype=np.int16)
+    else:
+        # 转换为 DAC 级别，使用 np.int16 显著降低内存占用
+        data_conv = np.round(data * 32767 / range_value).astype(np.int16)
 
-    # Data Conversion from V to DAC levels
-    data_conv = np.round(data * 32767 / range_value).astype(int)
+    # 智能处理文件后缀：如果已有 .arb 则不重复添加，如果没有则自动加上
+    file_path = Path(fName).with_suffix('.arb')
 
-    fName = fName + '.arb'  # Add file extension to the file name
+    # 文件创建与写入
+    with open(file_path, 'w') as fid:
+        # 使用多行字符串一次性写入文件头，减少 I/O 调用次数
+        header = (
+            "File Format:1.10\n"
+            "Channel Count:1\n"
+            "Column Char:TAB\n"
+            f"Sample Rate:{samplerate}\n"
+            f"High Level:{data_max:.4f}\n"
+            f"Low Level:{data_min:.4f}\n"
+            'Data Type:"Short"\n'
+            'Filter:"OFF"\n'
+            f"Data Points:{numberofpoints}\n"
+            "Data:\n"
+        )
+        fid.write(header)
 
-    # File creation and formatting
-    with open(fName, 'w') as fid:
-        fid.write('File Format:1.10\n')
-        fid.write('Channel Count:1\n')
-        fid.write('Column Char:TAB\n')
-        fid.write(f'Sample Rate:{samplerate}\n')
-        fid.write(f'High Level:{data_max:.4f}\n')
-        fid.write(f'Low Level:{data_min:.4f}\n')
-        fid.write('Data Type:"Short"\n')
-        fid.write('Filter:"OFF"\n')
-        fid.write(f'Data Points:{numberofpoints}\n')
-        fid.write('Data:\n')
-
-        # Write data to file and close it
-        for value in data_conv:
-            fid.write(f'{value}\n')
-
+        # 【核心优化】使用 numpy 的批量写入替代 Python 原生 for 循环
+        np.savetxt(fid, data_conv, fmt='%d')
 
 if __name__ == '__main__':
-    # Example usage
+    # 示例用法
     fs = 50
     t = np.arange(0, 100, 1/fs)
     x = 5 + 10 * np.sin(1 * 2 * np.pi * t) + np.sin(10 * 2 * np.pi * t)
-    samplerate = fs
-    fName = 'example'
-    toArbfile(x, samplerate, fName)
+    
+    # 即使传入 'example.arb' 也会被正确处理
+    toArbfile(x, fs, 'example')
